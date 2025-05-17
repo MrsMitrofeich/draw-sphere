@@ -121,9 +121,12 @@ async function removeTemplate(id) {
   }
 }
 
-// 🔌 Регистрация socketlib и WebSocket клиента
+// 📦 Глобальная переменная сокета
+let socket;
+
+// 🔌 Регистрация socketlib
 Hooks.once("socketlib.ready", () => {
-  const socket = socketlib.registerModule("draw-sphere");
+  socket = socketlib.registerModule("draw-sphere");
 
   socket.register("drawCircle", drawCircle, false);
   socket.register("drawCone", drawCone, false);
@@ -136,11 +139,15 @@ Hooks.once("socketlib.ready", () => {
 
 // 🌐 Подключение к внешнему WebSocket-серверу
 Hooks.once("ready", () => {
-  const socket = socketlib.getSocket("draw-sphere");
   const wsUrl = game.settings.get("draw-sphere", "wsUrl");
 
   if (!wsUrl) {
     console.warn("⚠️ draw-sphere: wsUrl не задан");
+    return;
+  }
+
+  if (!socket) {
+    console.warn("⚠️ draw-sphere: socketlib сокет ещё не готов");
     return;
   }
 
