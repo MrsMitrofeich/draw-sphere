@@ -15,6 +15,7 @@ jobs:
         run: |
           cd module
           zip -r ../draw-sphere.zip .
+          cp module.json ../
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
