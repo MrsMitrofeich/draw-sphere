@@ -1,0 +1,19 @@
+{
+  "name": "draw-sphere",
+  "title": "Draw Sphere",
+  "description": "Draw from external input using socketlib",
+  "version": "1.0.0",
+  "minimumCoreVersion": "10",
+  "compatibleCoreVersion": "11",
+  "main": "main.js",
+  "scripts": ["scripts/client.js"],
+  "socket": true,
+  "manifest": "",
+  "download": "",
+  "dependencies": [
+    {
+      "name": "socketlib",
+      "type": "module"
+    }
+  ]
+}
