@@ -1,15 +1,17 @@
 {
+  "id": "draw-sphere",
   "name": "draw-sphere",
   "title": "Draw Sphere",
-  "description": "Draw from external input using socketlib",
+  "description": "External drawing integration via socketlib + WebSocket.",
   "version": "1.0.0",
   "minimumCoreVersion": "10",
   "compatibleCoreVersion": "11",
   "main": "main.js",
   "scripts": ["scripts/client.js"],
   "socket": true,
-  "manifest": "",
-  "download": "",
+  "manifest": "https://mrsmitrofeich.github.io/draw-sphere/module.json",
+  "download": "https://mrsmitrofeich.github.io/draw-sphere/draw-sphere.zip",
+  "url": "https://github.com/MrsMitrofeich/draw-sphere",
   "dependencies": [
     {
       "name": "socketlib",
