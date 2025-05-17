@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "minimumCoreVersion": "10",
   "compatibleCoreVersion": "11",
-  "scripts": ["scripts/client.js"],
+  "scripts": ["scripts/client.js", "scripts/settings.js"],
   "socket": true,
   "manifest": "https://mrsmitrofeich.github.io/draw-sphere/module.json",
   "download": "https://mrsmitrofeich.github.io/draw-sphere/draw-sphere.zip",
