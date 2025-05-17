@@ -121,7 +121,7 @@ async function removeTemplate(id) {
   }
 }
 
-// 🔌 Регистрация в socketlib
+// 🔌 Регистрация socketlib и WebSocket клиента
 Hooks.once("socketlib.ready", () => {
   const socket = socketlib.registerModule("draw-sphere");
 
@@ -131,5 +131,40 @@ Hooks.once("socketlib.ready", () => {
   socket.register("drawRay", drawRay, false);
   socket.register("removeTemplate", removeTemplate, false);
 
-  console.log("✅ draw-sphere: методы зарегистрированы в socketlib");
+  console.log("✅ draw-sphere: socketlib зарегистрирован");
+});
+
+// 🌐 Подключение к внешнему WebSocket-серверу
+Hooks.once("ready", () => {
+  const socket = socketlib.getSocket("draw-sphere");
+  const wsUrl = game.settings.get("draw-sphere", "wsUrl");
+
+  if (!wsUrl) {
+    console.warn("⚠️ draw-sphere: wsUrl не задан");
+    return;
+  }
+
+  const ws = new WebSocket(wsUrl);
+
+  ws.addEventListener("open", () => {
+    console.log("🔌 draw-sphere: WebSocket подключен:", wsUrl);
+  });
+
+  ws.addEventListener("message", async (event) => {
+    try {
+      const { type, payload } = JSON.parse(event.data);
+      console.log("📨 draw-sphere: сообщение от сервера:", type, payload);
+      await socket.executeAsGM(type, payload);
+    } catch (err) {
+      console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
+    }
+  });
+
+  ws.addEventListener("close", () => {
+    console.warn("🛑 draw-sphere: WebSocket отключен");
+  });
+
+  ws.addEventListener("error", (err) => {
+    console.error("❌ draw-sphere: ошибка WebSocket:", err);
+  });
 });
