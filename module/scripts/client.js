@@ -112,7 +112,7 @@ async function drawRay({ relX1, relY1, relX2, relY2, width = 5, fillColor = "#00
 }
 
 // ❌ Удаление шаблона
-async function removeTemplate(id) {
+async function removeTemplate({ id }) {
   if (!canvas?.scene) return;
   const template = canvas.scene.templates.get(id);
   if (template) {
@@ -157,15 +157,17 @@ Hooks.once("ready", () => {
     console.log("🔌 draw-sphere: WebSocket подключен:", wsUrl);
   });
 
-  ws.addEventListener("message", async (event) => {
-    try {
-      const { type, payload } = JSON.parse(event.data);
-      console.log("📨 draw-sphere: сообщение от сервера:", type, payload);
-      await socket.executeAsGM(type, payload);
-    } catch (err) {
-      console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
-    }
-  });
+ws.addEventListener("message", async (event) => {
+  try {
+    const { requestId, type, payload } = JSON.parse(event.data);
+    const result = await socket.executeAsGM(type, payload);
+
+    // Отправляем результат обратно на сервер
+    ws.send(JSON.stringify({ requestId, result }));
+  } catch (err) {
+    console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
+  }
+});
 
   ws.addEventListener("close", () => {
     console.warn("🛑 draw-sphere: WebSocket отключен");
