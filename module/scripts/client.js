@@ -158,19 +158,19 @@ Hooks.once("ready", () => {
     console.log("🔌 draw-sphere: WebSocket подключен:", wsUrl);
   });
 
-  ws.addEventListener("message", async (event) => {
-    try {
-      const { type, payload } = JSON.parse(event.data);
-      if (!type || !socket._handlers.has(type)) {
-        console.warn(`⚠️ draw-sphere: неизвестный тип команды "${type}"`);
-        return;
-      }
+    ws.addEventListener("message", async (event) => {
+      try {
+        const { type, payload } = JSON.parse(event.data);
+        if (!type) {
+          console.warn(`⚠️ draw-sphere: не указан тип действия`);
+          return;
+        }
 
-      await socket.executeAsGM(type, payload); // 🔁 просто исполняем, не ждём и не отвечаем
-    } catch (err) {
-      console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
-    }
-  });
+        await socket.executeAsGM(type, payload);
+      } catch (err) {
+        console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
+      }
+    });
 
   ws.addEventListener("close", () => {
     console.warn("🛑 draw-sphere: WebSocket отключен");
