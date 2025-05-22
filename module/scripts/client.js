@@ -11,53 +11,48 @@ function relativeToSceneCoords(relX, relY) {
 const drawnOnce = new Set();
 
 // ⭕ Окружность
-async function drawCircle({ relX, relY, radius = 20, fillColor = "#FF0000", id }) {
+async function drawCircle({ x, y, radius = 20, fillColor = "#FF0000", id }) {
   if (!canvas?.scene) return null;
-  const { x, y } = relativeToSceneCoords(relX, relY);
-
   const data = {
     _id: id,
     t: "circle",
     user: game.user.id,
-    x, y,
+    x,
+    y,
     distance: radius,
     direction: 0,
     angle: 360,
     fillColor,
     flags: { "draw-sphere": true }
   };
-
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
   return template?.id;
 }
 
 // 🔺 Конус
-async function drawCone({ relX, relY, distance = 20, angle = 60, direction = 0, fillColor = "#FF8800", id }) {
+async function drawCone({ x, y, distance = 20, angle = 60, direction = 0, fillColor = "#FF8800", id }) {
   if (!canvas?.scene) return null;
-  const { x, y } = relativeToSceneCoords(relX, relY);
-
   const data = {
     _id: id,
     t: "cone",
     user: game.user.id,
-    x, y,
+    x,
+    y,
     distance,
     direction,
     angle,
     fillColor,
     flags: { "draw-sphere": true }
   };
-
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
   return template?.id;
 }
 
 // ◼️ Квадрат
-async function drawSquare({ relX, relY, size = 20, fillColor = "#00FF00", id }) {
+async function drawSquare({ x, y, size = 20, fillColor = "#00FF00", id }) {
   if (!canvas?.scene) return null;
-  const { x, y } = relativeToSceneCoords(relX, relY);
   const gridSize = canvas.scene.dimensions.size;
   const gridDistance = canvas.scene.dimensions.distance;
   const sizePx = size * gridSize / gridDistance;
@@ -73,18 +68,14 @@ async function drawSquare({ relX, relY, size = 20, fillColor = "#00FF00", id }) 
     fillColor,
     flags: { "draw-sphere": true }
   };
-
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
   return template?.id;
 }
 
 // ➖ Луч
-async function drawRay({ relX1, relY1, relX2, relY2, width = 5, fillColor = "#00AAFF", id }) {
+async function drawRay({ x1, y1, x2, y2, width = 5, fillColor = "#00AAFF", id }) {
   if (!canvas?.scene) return null;
-  const { x: x1, y: y1 } = relativeToSceneCoords(relX1, relY1);
-  const { x: x2, y: y2 } = relativeToSceneCoords(relX2, relY2);
-
   const grid = canvas.scene.dimensions;
   const scale = grid.distance / grid.size;
   const dx = x2 - x1;
@@ -105,7 +96,6 @@ async function drawRay({ relX1, relY1, relX2, relY2, width = 5, fillColor = "#00
     fillColor,
     flags: { "draw-sphere": true }
   };
-
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
   return template?.id;
@@ -121,12 +111,10 @@ async function removeTemplate({ id }) {
   }
 }
 
-// 📦 Глобальная переменная сокета
+// 📦 Глобальный сокет
 let socket;
 
 // 🔌 Регистрация socketlib
-// ❌ Без ответа, без requestId — просто принимаем и исполняем
-
 Hooks.once("socketlib.ready", () => {
   socket = socketlib.registerModule("draw-sphere");
 
@@ -139,16 +127,20 @@ Hooks.once("socketlib.ready", () => {
   console.log("✅ draw-sphere: socketlib зарегистрирован");
 });
 
+// 🌐 WebSocket только у активного клиента
 Hooks.once("ready", () => {
   const wsUrl = game.settings.get("draw-sphere", "wsUrl");
+  const activeUserName = game.settings.get("draw-sphere", "activeUserName");
 
-  if (!wsUrl) {
-    console.warn("⚠️ draw-sphere: wsUrl не задан");
+  if (!wsUrl || !activeUserName) return;
+
+  if (game.user.name !== activeUserName) {
+    console.log("ℹ️ draw-sphere: клиент не активный, WS не используется");
     return;
   }
 
   if (!socket) {
-    console.warn("⚠️ draw-sphere: socketlib сокет ещё не готов");
+    console.warn("⚠️ draw-sphere: socketlib ещё не готов");
     return;
   }
 
@@ -158,19 +150,31 @@ Hooks.once("ready", () => {
     console.log("🔌 draw-sphere: WebSocket подключен:", wsUrl);
   });
 
-    ws.addEventListener("message", async (event) => {
-      try {
-        const { type, payload } = JSON.parse(event.data);
-        if (!type) {
-          console.warn(`⚠️ draw-sphere: не указан тип действия`);
-          return;
-        }
+  ws.addEventListener("message", async (event) => {
+    try {
+      const { type, payload } = JSON.parse(event.data);
+      if (!type || !payload) return;
 
-        await socket.executeAsGM(type, payload);
-      } catch (err) {
-        console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
+      // Преобразование относительных координат → абсолютные
+      if ("relX" in payload && "relY" in payload) {
+        const { x, y } = relativeToSceneCoords(payload.relX, payload.relY);
+        payload.x = x;
+        payload.y = y;
       }
-    });
+      if ("relX1" in payload && "relY1" in payload && "relX2" in payload && "relY2" in payload) {
+        const p1 = relativeToSceneCoords(payload.relX1, payload.relY1);
+        const p2 = relativeToSceneCoords(payload.relX2, payload.relY2);
+        payload.x1 = p1.x;
+        payload.y1 = p1.y;
+        payload.x2 = p2.x;
+        payload.y2 = p2.y;
+      }
+
+      await socket.executeAsGM(type, payload);
+    } catch (err) {
+      console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
+    }
+  });
 
   ws.addEventListener("close", () => {
     console.warn("🛑 draw-sphere: WebSocket отключен");

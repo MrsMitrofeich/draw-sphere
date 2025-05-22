@@ -7,4 +7,11 @@ Hooks.once("init", () => {
     type: String,
     default: "ws://localhost:8765"
   });
+  game.settings.register("draw-sphere", "activeUserName", {
+      name: "Имя активного пользователя",
+      scope: "world",
+      config: true,
+      type: String,
+      default: ""
+  });
 });
