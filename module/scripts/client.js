@@ -47,7 +47,10 @@ async function drawCone({ x, y, distance = 20, angle = 60, direction = 0, fillCo
     direction,
     angle,
     fillColor,
-    flags: { "draw-sphere": true }
+    flags: {
+    "draw-sphere": {
+      originalId: id
+    }
   };
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
@@ -70,7 +73,10 @@ async function drawSquare({ x, y, size = 20, fillColor = "#00FF00", id }) {
     distance: size * Math.sqrt(2),
     direction: 45,
     fillColor,
-    flags: { "draw-sphere": true }
+    flags: {
+    "draw-sphere": {
+      originalId: id
+    }
   };
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
@@ -98,7 +104,10 @@ async function drawRay({ x1, y1, x2, y2, width = 5, fillColor = "#00AAFF", id })
     direction,
     width,
     fillColor,
-    flags: { "draw-sphere": true }
+    flags: {
+    "draw-sphere": {
+      originalId: id
+    }
   };
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
