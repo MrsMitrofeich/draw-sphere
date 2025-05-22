@@ -23,7 +23,11 @@ async function drawCircle({ x, y, radius = 20, fillColor = "#FF0000", id }) {
     direction: 0,
     angle: 360,
     fillColor,
-    flags: { "draw-sphere": true }
+    flags: {
+    "draw-sphere": {
+      originalId: id
+    }
+  }
   };
   const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   drawnOnce.add(template?.id);
@@ -104,11 +108,12 @@ async function drawRay({ x1, y1, x2, y2, width = 5, fillColor = "#00AAFF", id })
 // ❌ Удаление шаблона
 async function removeTemplate({ id }) {
   if (!canvas?.scene) return;
-  const template = canvas.scene.templates.get(id);
-  if (template) {
-    await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [id]);
-    drawnOnce.delete(id);
-  }
+const template = canvas.scene.templates.find(t =>
+  t.getFlag("draw-sphere", "originalId") === id
+);
+if (template) {
+  await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [template.id]);
+}
 }
 
 // 📦 Глобальный сокет
