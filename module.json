@@ -3,7 +3,7 @@
   "name": "draw-sphere",
   "title": "Draw Sphere",
   "description": "External drawing integration via WebSocket relay.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "minimumCoreVersion": "10",
   "compatibleCoreVersion": "11",
   "scripts": [
