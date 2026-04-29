@@ -26,8 +26,11 @@ function parseMsg(raw) {
 // canvas.dimensions gives the scene rect in canvas world coordinates.
 
 function normToScene(nx, ny) {
-  const { sceneX, sceneY, sceneWidth, sceneHeight } = canvas.dimensions;
-  return { x: sceneX + nx * sceneWidth, y: sceneY + ny * sceneHeight };
+  const rect = canvas.app.canvas.getBoundingClientRect();
+  return canvas.canvasCoordinatesFromClient({
+    x: rect.left + nx * rect.width,
+    y: rect.top  + ny * rect.height,
+  });
 }
 
 // ── Template state ─────────────────────────────────────────────────────────
@@ -152,6 +155,7 @@ async function handleRulerLost(markerId) {
 // ── Message handlers ───────────────────────────────────────────────────────
 
 async function handleUpdate(msg) {
+  if (!canvas?.dimensions) return;
   const { markerId, x, y, rotation, template } = msg;
   const { x: sceneX, y: sceneY } = normToScene(x, y);
 
@@ -216,7 +220,11 @@ function connectToRelay(wsUrl) {
 // ── Foundry hook ───────────────────────────────────────────────────────────
 
 Hooks.once("ready", () => {
-  if (!game.user.isGM) return;
+  const tvUserId = game.settings.get("draw-sphere", "tvUserId");
+  const isResponsible = tvUserId
+    ? game.user.id === tvUserId
+    : game.user.isGM;
+  if (!isResponsible) return;
   const wsUrl = game.settings.get("draw-sphere", "wsUrl");
   if (!wsUrl) return;
   connectToRelay(wsUrl);
