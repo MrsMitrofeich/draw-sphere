@@ -3,10 +3,13 @@
   "name": "draw-sphere",
   "title": "Draw Sphere",
   "description": "External drawing integration via socketlib + WebSocket.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minimumCoreVersion": "10",
   "compatibleCoreVersion": "11",
-  "scripts": ["scripts/client.js", "scripts/settings.js"],
+  "scripts": [
+    "scripts/client.js",
+    "scripts/settings.js"
+  ],
   "socket": true,
   "manifest": "https://mrsmitrofeich.github.io/draw-sphere/module.json",
   "download": "https://mrsmitrofeich.github.io/draw-sphere/draw-sphere.zip",
