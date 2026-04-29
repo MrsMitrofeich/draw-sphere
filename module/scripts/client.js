@@ -1,203 +1,259 @@
-// 🔁 Перевод относительных координат (0..1) в координаты сцены
-function relativeToSceneCoords(relX, relY) {
-  const screenX = relX * window.innerWidth;
-  const screenY = relY * window.innerHeight;
+// draw-sphere — FoundryVTT module
+// Consumes the DNDAR WebSocket protocol (dndar/1).
+// Contract reference: contract/ws-protocol.ts
+
+const PROTOCOL = "dndar/1";
+
+// ── Runtime validator (mirrors parseWSMessage from contract/ws-protocol.ts) ──
+
+function parseMsg(raw) {
+  let m;
+  try { m = JSON.parse(raw); } catch { return null; }
+  if (!m || m.protocol !== PROTOCOL) return null;
+  if (typeof m.markerId !== "number") return null;
+  if (m.type === "marker_lost") return m;
+  if (m.type === "marker_update") {
+    if (typeof m.x !== "number" || typeof m.y !== "number") return null;
+    if (typeof m.rotation !== "number") return null;
+    if (!m.template?.kind) return null;
+    return m;
+  }
+  return null;
+}
+
+// ── Coordinate conversion ──────────────────────────────────────────────────
+
+function normToScene(x, y) {
+  const screenX = x * window.innerWidth;
+  const screenY = y * window.innerHeight;
   const t = canvas.stage.worldTransform;
-  const x = (screenX - t.tx) / t.a;
-  const y = (screenY - t.ty) / t.d;
-  return { x, y };
-}
-
-const drawnOnce = new Set();
-
-// ⭕ Окружность
-async function drawCircle({ x, y, radius = 20, fillColor = "#FF0000", id }) {
-  if (!canvas?.scene) return null;
-  const data = {
-    _id: id,
-    t: "circle",
-    user: game.user.id,
-    x,
-    y,
-    distance: radius,
-    direction: 0,
-    angle: 360,
-    fillColor,
-    flags: {
-    "draw-sphere": {
-      originalId: id
-    }
-  }
+  return {
+    x: (screenX - t.tx) / t.a,
+    y: (screenY - t.ty) / t.d,
   };
-  const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
-  drawnOnce.add(template?.id);
-  return template?.id;
 }
 
-// 🔺 Конус
-async function drawCone({ x, y, distance = 20, angle = 60, direction = 0, fillColor = "#FF8800", id }) {
+// ── Template state ─────────────────────────────────────────────────────────
+// markerId → Foundry document id
+
+const active = new Map();          // regular templates
+const rulerPts = new Map();        // markerId → {x, y, sceneX, sceneY} for ruler endpoints
+let rulerDocId = null;             // single ruler line (ray template)
+
+// ── GM-side drawing functions (run via socketlib.executeAsGM) ──────────────
+
+async function gmCreateTemplate(data) {
   if (!canvas?.scene) return null;
-  const data = {
-    _id: id,
-    t: "cone",
+  const [doc] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
+  return doc?.id ?? null;
+}
+
+async function gmUpdateTemplate(id, data) {
+  if (!canvas?.scene) return;
+  const doc = canvas.scene.templates.get(id);
+  if (doc) await doc.update(data);
+}
+
+async function gmDeleteTemplate(id) {
+  if (!canvas?.scene) return;
+  const doc = canvas.scene.templates.get(id);
+  if (doc) await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [doc.id]);
+}
+
+// ── Template data builders ─────────────────────────────────────────────────
+
+function buildCreateData(template, sceneX, sceneY, rotationRad, markerId) {
+  const base = {
     user: game.user.id,
-    x,
-    y,
-    distance,
-    direction,
-    angle,
-    fillColor,
-    flags: {
-    "draw-sphere": {
-      originalId: id
-    }
-  }
+    x: sceneX,
+    y: sceneY,
+    flags: { "draw-sphere": { markerId } },
   };
-  const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
-  drawnOnce.add(template?.id);
-  return template?.id;
+  const scene = canvas.scene;
+  const gridPx = scene.dimensions.size;
+  const gridFt = scene.dimensions.distance;
+  const ftToPx = gridPx / gridFt;
+  const dirDeg = (rotationRad * 180) / Math.PI;
+
+  switch (template.kind) {
+    case "circle":
+      return { ...base, t: "circle", distance: template.sizeFt, direction: 0, angle: 360, fillColor: "#FF4444" };
+
+    case "cone":
+      return { ...base, t: "cone", distance: template.sizeFt, direction: dirDeg, angle: template.angleDeg, fillColor: "#FF8800" };
+
+    case "ray":
+      return { ...base, t: "ray", distance: template.sizeFt, direction: dirDeg, width: template.widthFt, fillColor: "#00AAFF" };
+
+    case "rect": {
+      const halfPx = (template.widthFt * ftToPx) / 2;
+      return {
+        ...base,
+        t: "rect",
+        x: sceneX - halfPx,
+        y: sceneY - halfPx,
+        distance: template.sizeFt,
+        direction: dirDeg,
+        fillColor: "#00CC44",
+      };
+    }
+
+    default:
+      return null;
+  }
 }
 
-// ◼️ Квадрат
-async function drawSquare({ x, y, size = 20, fillColor = "#00FF00", id }) {
-  if (!canvas?.scene) return null;
-  const gridSize = canvas.scene.dimensions.size;
-  const gridDistance = canvas.scene.dimensions.distance;
-  const sizePx = size * gridSize / gridDistance;
+function buildUpdateData(template, sceneX, sceneY, rotationRad) {
+  const scene = canvas.scene;
+  const gridPx = scene.dimensions.size;
+  const gridFt = scene.dimensions.distance;
+  const ftToPx = gridPx / gridFt;
+  const dirDeg = (rotationRad * 180) / Math.PI;
 
-  const data = {
-    _id: id,
-    t: "rect",
-    user: game.user.id,
-    x: x - sizePx / 2,
-    y: y - sizePx / 2,
-    distance: size * Math.sqrt(2),
-    direction: 45,
-    fillColor,
-    flags: {
-    "draw-sphere": {
-      originalId: id
+  switch (template.kind) {
+    case "circle":
+      return { x: sceneX, y: sceneY };
+
+    case "cone":
+    case "ray":
+      return { x: sceneX, y: sceneY, direction: dirDeg };
+
+    case "rect": {
+      const halfPx = (template.widthFt * ftToPx) / 2;
+      return { x: sceneX - halfPx, y: sceneY - halfPx, direction: dirDeg };
     }
+
+    default:
+      return null;
   }
-  };
-  const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
-  drawnOnce.add(template?.id);
-  return template?.id;
 }
 
-// ➖ Луч
-async function drawRay({ x1, y1, x2, y2, width = 5, fillColor = "#00AAFF", id }) {
-  if (!canvas?.scene) return null;
-  const grid = canvas.scene.dimensions;
-  const scale = grid.distance / grid.size;
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const distanceFt = Math.sqrt(dx ** 2 + dy ** 2) * scale;
-  let direction = (Math.atan2(dy, dx) * 180) / Math.PI;
-  if (direction < 0) direction += 360;
+// ── Ruler handling ─────────────────────────────────────────────────────────
+// ruler_begin and ruler_end are two separate markers; together they define a ray.
+
+async function handleRulerUpdate(markerId, template, sceneX, sceneY, normX, normY) {
+  rulerPts.set(markerId, { sceneX, sceneY, normX, normY });
+
+  // Find the paired endpoint
+  const pairedId = template.pairedMarkerId;
+  const paired = rulerPts.get(pairedId);
+  if (!paired) return;   // waiting for the other marker
+
+  // Determine which is begin/end
+  const isBegin = template.kind === "ruler_begin";
+  const bx = isBegin ? sceneX : paired.sceneX;
+  const by = isBegin ? sceneY : paired.sceneY;
+  const ex = isBegin ? paired.sceneX : sceneX;
+  const ey = isBegin ? paired.sceneY : sceneY;
+
+  const dx = ex - bx, dy = ey - by;
+  const scene = canvas.scene;
+  const gridPx = scene.dimensions.size;
+  const gridFt = scene.dimensions.distance;
+  const distPx = Math.sqrt(dx * dx + dy * dy);
+  const distFt = distPx * (gridFt / gridPx);
+  let dirDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  if (dirDeg < 0) dirDeg += 360;
 
   const data = {
-    _id: id,
     t: "ray",
     user: game.user.id,
-    x: x1,
-    y: y1,
-    distance: distanceFt,
-    direction,
-    width,
-    fillColor,
-    flags: {
-    "draw-sphere": {
-      originalId: id
-    }
-  }
+    x: bx, y: by,
+    distance: distFt,
+    direction: dirDeg,
+    width: 1,
+    fillColor: "#FFFF00",
+    flags: { "draw-sphere": { ruler: true } },
   };
-  const [template] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
-  drawnOnce.add(template?.id);
-  return template?.id;
+
+  if (rulerDocId) {
+    await socket.executeAsGM("gmUpdateTemplate", rulerDocId, { x: bx, y: by, distance: distFt, direction: dirDeg });
+  } else {
+    rulerDocId = await socket.executeAsGM("gmCreateTemplate", data);
+  }
 }
 
-// ❌ Удаление шаблона
-async function removeTemplate({ id }) {
-  if (!canvas?.scene) return;
-const template = canvas.scene.templates.find(t =>
-  t.getFlag("draw-sphere", "originalId") === id
-);
-if (template) {
-  await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [template.id]);
-}
+async function handleRulerLost(markerId) {
+  rulerPts.delete(markerId);
+  if (rulerDocId) {
+    await socket.executeAsGM("gmDeleteTemplate", rulerDocId);
+    rulerDocId = null;
+  }
 }
 
-// 📦 Глобальный сокет
+// ── Message handlers ───────────────────────────────────────────────────────
+
+async function handleUpdate(msg) {
+  const { markerId, x, y, rotation, template } = msg;
+  const { x: sceneX, y: sceneY } = normToScene(x, y);
+
+  if (template.kind === "ruler_begin" || template.kind === "ruler_end") {
+    await handleRulerUpdate(markerId, template, sceneX, sceneY, x, y);
+    return;
+  }
+
+  const existingId = active.get(markerId);
+  if (existingId) {
+    const update = buildUpdateData(template, sceneX, sceneY, rotation);
+    if (update) await socket.executeAsGM("gmUpdateTemplate", existingId, update);
+  } else {
+    const createData = buildCreateData(template, sceneX, sceneY, rotation, markerId);
+    if (!createData) return;
+    const id = await socket.executeAsGM("gmCreateTemplate", createData);
+    if (id) active.set(markerId, id);
+  }
+}
+
+async function handleLost(msg) {
+  const { markerId } = msg;
+  const id = active.get(markerId);
+  if (id) {
+    await socket.executeAsGM("gmDeleteTemplate", id);
+    active.delete(markerId);
+  }
+  if (rulerPts.has(markerId)) {
+    await handleRulerLost(markerId);
+  }
+}
+
+// ── Foundry hooks ──────────────────────────────────────────────────────────
+
 let socket;
 
-// 🔌 Регистрация socketlib
 Hooks.once("socketlib.ready", () => {
   socket = socketlib.registerModule("draw-sphere");
-
-  socket.register("drawCircle", drawCircle, false);
-  socket.register("drawCone", drawCone, false);
-  socket.register("drawSquare", drawSquare, false);
-  socket.register("drawRay", drawRay, false);
-  socket.register("removeTemplate", removeTemplate, false);
-
-  console.log("✅ draw-sphere: socketlib зарегистрирован");
+  socket.register("gmCreateTemplate", gmCreateTemplate);
+  socket.register("gmUpdateTemplate", gmUpdateTemplate);
+  socket.register("gmDeleteTemplate", gmDeleteTemplate);
+  console.log("draw-sphere: socketlib ready");
 });
 
-// 🌐 WebSocket только у активного клиента
 Hooks.once("ready", () => {
   const wsUrl = game.settings.get("draw-sphere", "wsUrl");
   const activeUserName = game.settings.get("draw-sphere", "activeUserName");
-
-  if (!wsUrl || !activeUserName) return;
-
-  if (game.user.name !== activeUserName) {
-    console.log("ℹ️ draw-sphere: клиент не активный, WS не используется");
-    return;
-  }
-
-  if (!socket) {
-    console.warn("⚠️ draw-sphere: socketlib ещё не готов");
-    return;
-  }
+  if (!wsUrl || !activeUserName || game.user.name !== activeUserName) return;
+  if (!socket) { console.warn("draw-sphere: socketlib not ready"); return; }
 
   const ws = new WebSocket(wsUrl);
 
-  ws.addEventListener("open", () => {
-    console.log("🔌 draw-sphere: WebSocket подключен:", wsUrl);
-  });
+  ws.addEventListener("open", () => console.log("draw-sphere: WS connected", wsUrl));
 
   ws.addEventListener("message", async (event) => {
-    try {
-      const { type, payload } = JSON.parse(event.data);
-      if (!type || !payload) return;
-
-      // Преобразование относительных координат → абсолютные
-      if ("relX" in payload && "relY" in payload) {
-        const { x, y } = relativeToSceneCoords(payload.relX, payload.relY);
-        payload.x = x;
-        payload.y = y;
-      }
-      if ("relX1" in payload && "relY1" in payload && "relX2" in payload && "relY2" in payload) {
-        const p1 = relativeToSceneCoords(payload.relX1, payload.relY1);
-        const p2 = relativeToSceneCoords(payload.relX2, payload.relY2);
-        payload.x1 = p1.x;
-        payload.y1 = p1.y;
-        payload.x2 = p2.x;
-        payload.y2 = p2.y;
-      }
-
-      await socket.executeAsGM(type, payload);
-    } catch (err) {
-      console.error("❌ draw-sphere: ошибка обработки WS-сообщения:", err);
+    const msg = parseMsg(event.data);
+    if (!msg) {
+      console.warn("draw-sphere: rejected message:", event.data.slice(0, 120));
+      return;
     }
+    if (msg.type === "marker_update") await handleUpdate(msg);
+    else if (msg.type === "marker_lost") await handleLost(msg);
   });
 
   ws.addEventListener("close", () => {
-    console.warn("🛑 draw-sphere: WebSocket отключен");
+    console.warn("draw-sphere: WS closed");
+    active.clear();
+    rulerPts.clear();
+    rulerDocId = null;
   });
 
-  ws.addEventListener("error", (err) => {
-    console.error("❌ draw-sphere: ошибка WebSocket:", err);
-  });
+  ws.addEventListener("error", (err) => console.error("draw-sphere: WS error", err));
 });
