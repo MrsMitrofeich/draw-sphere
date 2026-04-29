@@ -26,10 +26,9 @@ function parseMsg(raw) {
 // canvas.dimensions gives the scene rect in canvas world coordinates.
 
 function normToScene(nx, ny) {
-  const rect = canvas.app.canvas.getBoundingClientRect();
   return canvas.canvasCoordinatesFromClient({
-    x: rect.left + nx * rect.width,
-    y: rect.top  + ny * rect.height,
+    x: nx * window.innerWidth,
+    y: ny * window.innerHeight,
   });
 }
 
