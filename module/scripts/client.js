@@ -4,7 +4,7 @@
 
 const PROTOCOL = "dndar/1";
 
-// ── Runtime validator (mirrors parseWSMessage from contract/ws-protocol.ts) ──
+// ── Runtime validator ──────────────────────────────────────────────────────
 
 function parseMsg(raw) {
   let m;
@@ -22,39 +22,35 @@ function parseMsg(raw) {
 }
 
 // ── Coordinate conversion ──────────────────────────────────────────────────
+// iOS sends normalised [0,1] relative to TV screen = Foundry scene area.
+// canvas.dimensions gives the scene rect in canvas world coordinates.
 
-function normToScene(x, y) {
-  const screenX = x * window.innerWidth;
-  const screenY = y * window.innerHeight;
-  const t = canvas.stage.worldTransform;
-  return {
-    x: (screenX - t.tx) / t.a,
-    y: (screenY - t.ty) / t.d,
-  };
+function normToScene(nx, ny) {
+  const { sceneX, sceneY, sceneWidth, sceneHeight } = canvas.dimensions;
+  return { x: sceneX + nx * sceneWidth, y: sceneY + ny * sceneHeight };
 }
 
 // ── Template state ─────────────────────────────────────────────────────────
-// markerId → Foundry document id
 
-const active = new Map();          // regular templates
-const rulerPts = new Map();        // markerId → {x, y, sceneX, sceneY} for ruler endpoints
-let rulerDocId = null;             // single ruler line (ray template)
+const active   = new Map(); // markerId → MeasuredTemplate doc id
+const rulerPts = new Map(); // markerId → {sceneX, sceneY}
+let rulerDocId = null;
 
-// ── GM-side drawing functions (run via socketlib.executeAsGM) ──────────────
+// ── Document helpers (GM-only, called directly since we guard with isGM) ──
 
-async function gmCreateTemplate(data) {
+async function createTemplate(data) {
   if (!canvas?.scene) return null;
   const [doc] = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [data]);
   return doc?.id ?? null;
 }
 
-async function gmUpdateTemplate(id, data) {
+async function updateTemplate(id, data) {
   if (!canvas?.scene) return;
   const doc = canvas.scene.templates.get(id);
   if (doc) await doc.update(data);
 }
 
-async function gmDeleteTemplate(id) {
+async function deleteTemplate(id) {
   if (!canvas?.scene) return;
   const doc = canvas.scene.templates.get(id);
   if (doc) await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [doc.id]);
@@ -65,81 +61,56 @@ async function gmDeleteTemplate(id) {
 function buildCreateData(template, sceneX, sceneY, rotationRad, markerId) {
   const base = {
     user: game.user.id,
-    x: sceneX,
-    y: sceneY,
+    x: sceneX, y: sceneY,
     flags: { "draw-sphere": { markerId } },
   };
-  const scene = canvas.scene;
-  const gridPx = scene.dimensions.size;
-  const gridFt = scene.dimensions.distance;
-  const ftToPx = gridPx / gridFt;
-  const dirDeg = (rotationRad * 180) / Math.PI;
+  const { size: gridPx, distance: gridFt } = canvas.dimensions;
+  const ftToPx  = gridPx / gridFt;
+  const dirDeg  = (rotationRad * 180) / Math.PI;
 
   switch (template.kind) {
     case "circle":
       return { ...base, t: "circle", distance: template.sizeFt, direction: 0, angle: 360, fillColor: "#FF4444" };
-
     case "cone":
       return { ...base, t: "cone", distance: template.sizeFt, direction: dirDeg, angle: template.angleDeg, fillColor: "#FF8800" };
-
     case "ray":
       return { ...base, t: "ray", distance: template.sizeFt, direction: dirDeg, width: template.widthFt, fillColor: "#00AAFF" };
-
     case "rect": {
       const halfPx = (template.widthFt * ftToPx) / 2;
-      return {
-        ...base,
-        t: "rect",
-        x: sceneX - halfPx,
-        y: sceneY - halfPx,
-        distance: template.sizeFt,
-        direction: dirDeg,
-        fillColor: "#00CC44",
-      };
+      return { ...base, t: "rect", x: sceneX - halfPx, y: sceneY - halfPx, distance: template.sizeFt, direction: dirDeg, fillColor: "#00CC44" };
     }
-
-    default:
-      return null;
+    default: return null;
   }
 }
 
 function buildUpdateData(template, sceneX, sceneY, rotationRad) {
-  const scene = canvas.scene;
-  const gridPx = scene.dimensions.size;
-  const gridFt = scene.dimensions.distance;
-  const ftToPx = gridPx / gridFt;
-  const dirDeg = (rotationRad * 180) / Math.PI;
+  const { size: gridPx, distance: gridFt } = canvas.dimensions;
+  const ftToPx  = gridPx / gridFt;
+  const dirDeg  = (rotationRad * 180) / Math.PI;
 
   switch (template.kind) {
     case "circle":
       return { x: sceneX, y: sceneY };
-
     case "cone":
     case "ray":
       return { x: sceneX, y: sceneY, direction: dirDeg };
-
     case "rect": {
       const halfPx = (template.widthFt * ftToPx) / 2;
       return { x: sceneX - halfPx, y: sceneY - halfPx, direction: dirDeg };
     }
-
-    default:
-      return null;
+    default: return null;
   }
 }
 
 // ── Ruler handling ─────────────────────────────────────────────────────────
-// ruler_begin and ruler_end are two separate markers; together they define a ray.
 
-async function handleRulerUpdate(markerId, template, sceneX, sceneY, normX, normY) {
-  rulerPts.set(markerId, { sceneX, sceneY, normX, normY });
+async function handleRulerUpdate(markerId, template, sceneX, sceneY) {
+  rulerPts.set(markerId, { sceneX, sceneY });
 
-  // Find the paired endpoint
   const pairedId = template.pairedMarkerId;
-  const paired = rulerPts.get(pairedId);
-  if (!paired) return;   // waiting for the other marker
+  const paired   = rulerPts.get(pairedId);
+  if (!paired) return; // wait for the other endpoint
 
-  // Determine which is begin/end
   const isBegin = template.kind === "ruler_begin";
   const bx = isBegin ? sceneX : paired.sceneX;
   const by = isBegin ? sceneY : paired.sceneY;
@@ -147,11 +118,8 @@ async function handleRulerUpdate(markerId, template, sceneX, sceneY, normX, norm
   const ey = isBegin ? paired.sceneY : sceneY;
 
   const dx = ex - bx, dy = ey - by;
-  const scene = canvas.scene;
-  const gridPx = scene.dimensions.size;
-  const gridFt = scene.dimensions.distance;
-  const distPx = Math.sqrt(dx * dx + dy * dy);
-  const distFt = distPx * (gridFt / gridPx);
+  const { size: gridPx, distance: gridFt } = canvas.dimensions;
+  const distFt = Math.sqrt(dx * dx + dy * dy) * (gridFt / gridPx);
   let dirDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
   if (dirDeg < 0) dirDeg += 360;
 
@@ -167,16 +135,16 @@ async function handleRulerUpdate(markerId, template, sceneX, sceneY, normX, norm
   };
 
   if (rulerDocId) {
-    await socket.executeAsGM("gmUpdateTemplate", rulerDocId, { x: bx, y: by, distance: distFt, direction: dirDeg });
+    await updateTemplate(rulerDocId, { x: bx, y: by, distance: distFt, direction: dirDeg });
   } else {
-    rulerDocId = await socket.executeAsGM("gmCreateTemplate", data);
+    rulerDocId = await createTemplate(data);
   }
 }
 
 async function handleRulerLost(markerId) {
   rulerPts.delete(markerId);
   if (rulerDocId) {
-    await socket.executeAsGM("gmDeleteTemplate", rulerDocId);
+    await deleteTemplate(rulerDocId);
     rulerDocId = null;
   }
 }
@@ -188,18 +156,18 @@ async function handleUpdate(msg) {
   const { x: sceneX, y: sceneY } = normToScene(x, y);
 
   if (template.kind === "ruler_begin" || template.kind === "ruler_end") {
-    await handleRulerUpdate(markerId, template, sceneX, sceneY, x, y);
+    await handleRulerUpdate(markerId, template, sceneX, sceneY);
     return;
   }
 
   const existingId = active.get(markerId);
   if (existingId) {
     const update = buildUpdateData(template, sceneX, sceneY, rotation);
-    if (update) await socket.executeAsGM("gmUpdateTemplate", existingId, update);
+    if (update) await updateTemplate(existingId, update);
   } else {
     const createData = buildCreateData(template, sceneX, sceneY, rotation, markerId);
     if (!createData) return;
-    const id = await socket.executeAsGM("gmCreateTemplate", createData);
+    const id = await createTemplate(createData);
     if (id) active.set(markerId, id);
   }
 }
@@ -208,7 +176,7 @@ async function handleLost(msg) {
   const { markerId } = msg;
   const id = active.get(markerId);
   if (id) {
-    await socket.executeAsGM("gmDeleteTemplate", id);
+    await deleteTemplate(id);
     active.delete(markerId);
   }
   if (rulerPts.has(markerId)) {
@@ -216,44 +184,40 @@ async function handleLost(msg) {
   }
 }
 
-// ── Foundry hooks ──────────────────────────────────────────────────────────
+// ── WebSocket connection ───────────────────────────────────────────────────
 
-let socket;
-
-Hooks.once("socketlib.ready", () => {
-  socket = socketlib.registerModule("draw-sphere");
-  socket.register("gmCreateTemplate", gmCreateTemplate);
-  socket.register("gmUpdateTemplate", gmUpdateTemplate);
-  socket.register("gmDeleteTemplate", gmDeleteTemplate);
-  console.log("draw-sphere: socketlib ready");
-});
-
-Hooks.once("ready", () => {
-  const wsUrl = game.settings.get("draw-sphere", "wsUrl");
-  const activeUserName = game.settings.get("draw-sphere", "activeUserName");
-  if (!wsUrl || !activeUserName || game.user.name !== activeUserName) return;
-  if (!socket) { console.warn("draw-sphere: socketlib not ready"); return; }
-
+function connectToRelay(wsUrl) {
   const ws = new WebSocket(wsUrl);
 
-  ws.addEventListener("open", () => console.log("draw-sphere: WS connected", wsUrl));
+  ws.addEventListener("open", () =>
+    console.log("draw-sphere: connected to relay", wsUrl)
+  );
 
-  ws.addEventListener("message", async (event) => {
-    const msg = parseMsg(event.data);
-    if (!msg) {
-      console.warn("draw-sphere: rejected message:", event.data.slice(0, 120));
-      return;
-    }
+  ws.addEventListener("message", async ({ data }) => {
+    const msg = parseMsg(data);
+    if (!msg) return;
     if (msg.type === "marker_update") await handleUpdate(msg);
     else if (msg.type === "marker_lost") await handleLost(msg);
   });
 
   ws.addEventListener("close", () => {
-    console.warn("draw-sphere: WS closed");
+    console.warn("draw-sphere: relay disconnected — retry in 3s");
     active.clear();
     rulerPts.clear();
     rulerDocId = null;
+    setTimeout(() => connectToRelay(wsUrl), 3000);
   });
 
-  ws.addEventListener("error", (err) => console.error("draw-sphere: WS error", err));
+  ws.addEventListener("error", (err) =>
+    console.error("draw-sphere: WS error", err)
+  );
+}
+
+// ── Foundry hook ───────────────────────────────────────────────────────────
+
+Hooks.once("ready", () => {
+  if (!game.user.isGM) return;
+  const wsUrl = game.settings.get("draw-sphere", "wsUrl");
+  if (!wsUrl) return;
+  connectToRelay(wsUrl);
 });
