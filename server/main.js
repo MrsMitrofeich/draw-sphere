@@ -1,6 +1,6 @@
 const WebSocket = require("ws");
 
-const PORT = process.env.PORT || 8765;
+const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT }, () => {
   console.log(`🟢 draw-sphere WebSocket-сервер запущен на 0.0.0.0:${PORT}`);
 });
